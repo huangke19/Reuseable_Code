@@ -33,7 +33,7 @@ class UserProfile(models.Model):
     @classmethod
     def check_and_obtain_by_id(cls, id):
         exist = cls.objects.filter(pk=id, is_active=True).exists()
-        obj = cls.objects.get(pk=id)
+        obj = cls.objects.get(pk=id) if exist else None
         return exist, obj
 
     def update_obj(self, **kwargs):
