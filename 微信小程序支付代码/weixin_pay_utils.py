@@ -1,6 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+
+# Author: huangke
+# Email: huangkwell@163.com
+# Date: 2019-04-24
+
+
 """
 商户系统和微信支付系统主要交互：
 
@@ -18,6 +24,7 @@
 # 标准库
 import hashlib
 from xml.etree import cElementTree as ETree
+
 
 # 项目导入
 
