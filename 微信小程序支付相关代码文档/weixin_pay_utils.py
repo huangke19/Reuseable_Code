@@ -89,7 +89,7 @@ def dict_to_xml(**kwargs):
     return xml_str
 
 
-def wx_sign(WX_MCH_KEY, **raw):
+def wx_sign(wx_mch_key, **raw):
     """
     生成签名
     参考微信签名生成算法
@@ -99,7 +99,7 @@ def wx_sign(WX_MCH_KEY, **raw):
     """
     raw = [(k, str(raw[k]) if isinstance(raw[k], (int, float)) else raw[k]) for k in sorted(raw.keys())]
     s = "&".join("=".join(kv) for kv in raw if kv[1])
-    s += "&key={0}".format(WX_MCH_KEY)
+    s += "&key={0}".format(wx_mch_key)
     return hashlib.md5(to_utf8(s)).hexdigest().upper()
 
 
