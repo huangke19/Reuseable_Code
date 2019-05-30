@@ -35,39 +35,39 @@ import time
 
 import requests
 
-from xxx.settings import WX_APPID, WX_REFUND_URL, MCH_ID, WX_NOTIFY_URL, WX_TRADE_TYPE, \
-    WX_API_KEY, WX_SECRET
+from aviation_service.settings import WX_APPID, WX_REFUND_URL, MCH_ID, WX_NOTIFY_URL, WX_TRADE_TYPE, \
+    WX_API_KEY, WX_SECRET, KEY_PATH, CERT_PATH
 from commons.models import Business
 from .hks_utils import unify_order, wx_sign, dict_to_xml, xml_to_dict, generate_nonce_str, get_openid
 
 
 def get_unify_order_params(business_id, order, js_code):
     """
-    支付函数
-    支付成功：返回True
-    支付失败：返回FalSe
+    统一下单函数
     """
 
     bs = Business.objects.get(pk=business_id)
-    bs = Business.objects.get(pk=bs.parent_id) if bs.pay_used else bs
+    # bs = Business.objects.get(pk=bs.parent_id) if bs.pay_used else bs
 
     # 此处需由前端通过wei提供code值，小程序调用wx.login() 获取 临时登录凭证code，并回传到开发者服务器。
-    open_id = get_openid(order.appid, WX_SECRET, js_code)
+    open_id = get_openid(bs.wx_app_id, bs.wx_app_secret, js_code)
 
     unify_param_dict = dict(
-        appid=order.appid,
-        mch_id=order.mch_id,
+        appid=bs.wx_app_id,
+        mch_id=bs.wx_mch_id,
         nonce_str=generate_nonce_str(),
-        body=bs.name,  # 例如：综合超市
+        body='TuoFeng',  # 例如：综合超市
         out_trade_no=order.out_trade_no,  # 商户订单号
-        total_fee=int(order.total_fee),  # 消费金额 单位是分
+        # total_fee=int(order.total_fee),  # 消费金额 单位是分
+        total_fee=1,  # 消费金额 单位是分
         spbill_create_ip=order.spbill_create_ip,  # 调用微信企业付款接口服务器公网IP地址,只有使用NATIVE支付方式时才是服务器IP
         notify_url=WX_NOTIFY_URL,
         trade_type=WX_TRADE_TYPE,
-        open_id=open_id  # trade_type为JSAPI时此参数必传
+        openid=open_id  # trade_type为JSAPI时此参数必传
     )
-
-    sign = wx_sign(WX_API_KEY, **unify_param_dict)
+    print("第一次签名参数")
+    sign = wx_sign(bs.wx_mch_api_key, **unify_param_dict)
+    print(sign)
     unify_param_dict.update({'sign': sign})
 
     # 检查必填参数是否缺失, 此项检查total不能为0
@@ -80,37 +80,42 @@ def get_unify_order_params(business_id, order, js_code):
         return response_dict
 
 
-def get_resigned_params(**params_dict):
+def get_resigned_params(business_id, **params_dict):
     """
     商户server调用再次签名
     将移动端调起支付所需要的参数进行再次签名
     """
-    if not params_dict: return
+    if not params_dict: return {}
+
+    bs = Business.objects.get(pk=business_id)
+    # bs = Business.objects.get(pk=bs.parent_id) if bs.pay_used else bs
 
     # 多参数字典中取出移动端调起支付所必需的5个参数
     appid = params_dict.get("appid")
-    partnerid = params_dict.get("partnerid")
-    prepayid = params_dict.get("prepayid")
-    package = params_dict.get("package")
-    noncestr = params_dict.get("noncestr")
-    timestamp = int(time.time())
+    prepayid = params_dict.get("prepay_id")
+    noncestr = params_dict.get("nonce_str")
+    timestamp = str(int(time.time()))
+    package = "prepay_id=%s" % prepayid
 
-    if not all([appid, partnerid, prepayid, package, noncestr]): return
+    if not all([appid, prepayid, package, noncestr]): return
     # 进行二次签名
     # WX_MCH_KEY: 微信支付重要密钥，请登录微信支付商户平台，在 账户中心-API安全-设置API密钥设置
-    necess_params = dict(
-        appid=appid,
-        partnerid=partnerid,
-        prepayid=prepayid,
+    necess_params_dic = dict(
+        appId=appid,
+        timeStamp=timestamp,
+        nonceStr=noncestr,
         package=package,
-        noncestr=noncestr)
-    WX_MCH_KEY = 'to_be_replaced'  # 临时填充，申请通过后替换到settings中
-    sign = wx_sign(WX_MCH_KEY, **necess_params)
-    res_dict = necess_params.update({"sign": sign, "timestamp": timestamp})
-    return (res_dict)
+        signType='MD5'
+    )
+    wx_mch_key = bs.wx_mch_api_key  # 参数加密密钥,位于微信商户平台(pay.weixin.qq.com)-->账户设置-->API安全-->密钥设置
+    print("第二次签名参数----------")
+    print(necess_params_dic)
+    sign = wx_sign(wx_mch_key, **necess_params_dic)
+    necess_params_dic.update({"sign": sign, "timestamp": timestamp})
+    return necess_params_dic
 
 
-def weixin_refund(**kwargs):
+def weixin_refund(bs, **kwargs):
     """
     微信退款功能函数
     url: https://api.mch.weixin.qq.com/secapi/pay/refund
@@ -121,7 +126,6 @@ def weixin_refund(**kwargs):
     3. 向API发送请求
     4. 解析返回结果
     """
-
     xml_str = dict_to_xml(**kwargs)
     # 发送退款请求
     headers = {'Content-Type': 'application/xml'}  # se
@@ -129,11 +133,13 @@ def weixin_refund(**kwargs):
         url=WX_REFUND_URL,
         data=xml_str,
         headers=headers,
-        cert=('/path/to/client.cert', '/path/to/client.key')
+        cert=(CERT_PATH, KEY_PATH)                                  # 调试用
+        # cert=(bs.wx_mch_apiclient_cert, bs.wx_mch_apiclient_key)  # 正式启用时路径写入商户表
     )
     response_dict = xml_to_dict(res.content)
     return_code = response_dict.get("return_code")
     return_msg = response_dict.get("return_msg")
+    print("退款api返回结果", response_dict)
     if return_code == "SUCCESS" and return_msg == "OK":
         return True
     elif return_code == "SUCCESS":

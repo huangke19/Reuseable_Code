@@ -16,13 +16,16 @@
 """
 
 # 标准库
+import base64
 import hashlib
 import random
 import string
 from xml.etree import cElementTree as ETree
+from Crypto.Cipher import AES
 
 # 项目导入
 import requests
+import xmltodict as xmltodict
 
 from xxx.settings import WX_APPID, WX_UNIFIEDORDER_URL
 
@@ -93,6 +96,47 @@ def wx_sign(WX_MCH_KEY, **raw):
     return hashlib.md5(to_utf8(s)).hexdigest().upper()
 
 
+def md5Enecoder(s):
+    """ 对key做md5加密 """
+    import hashlib
+    m = hashlib.md5()
+    s = to_bytes(s)
+    m.update(s)
+    encode_str = m.hexdigest()
+    return encode_str
+
+
+def wx_decode_refund_secret(xml):
+    """
+    对退款结果进行解密
+
+    解密步骤如下：
+        （1）对加密串A做base64解码，得到加密串B
+        （2）对商户key做md5，得到32位小写key* ( key设置路径：微信商户平台(pay.weixin.qq.com)-->账户设置-->API安全-->密钥设置 )
+        （3）用key*对加密串B做AES-256-ECB解密（PKCS7Padding）
+    """
+    BS = AES.block_size
+    pad = lambda s: s + (BS - len(s) % BS) * chr(BS - len(s) % BS)
+    unpad = lambda s: s[0:-ord(s[-1])]
+
+    data = xmltodict.parse(xml)['xml']
+    req_info = data['req_info'].encode()
+    req_info = base64.decodebytes(req_info)
+    hash = hashlib.md5()
+    hash.update(WX_API_KEY.encode())
+    key = hash.hexdigest().encode()
+
+    cipher = AES.new(key, AES.MODE_ECB)
+    decrypt_bytes = cipher.decrypt(req_info)
+    decrypt_str = decrypt_bytes.decode()
+    decrypt_str = unpad(decrypt_str)
+
+    info = xmltodict.parse(decrypt_str)['root']
+    res_dict = dict(data, **info)
+    res_dict.pop('req_info')
+    return res_dict
+
+
 def generate_nonce_str(length=32):
     char = string.ascii_letters + string.digits
     return "".join(random.choice(char) for _ in range(length))
@@ -121,8 +165,9 @@ def unify_order(**kwargs):
         headers=headers,
     )
     response_dict = xml_to_dict(res.content)
-
-    return_code = response_dict.get('return_msg')
+    print("统一下单", response_dict)
+    # print(response_dict)
+    return_code = response_dict.get('return_code')
     result_code = response_dict.get('result_code')
     return_msg = response_dict.get('return_msg')
     err_code_des = response_dict.get('err_code_des')
@@ -130,8 +175,7 @@ def unify_order(**kwargs):
     # 统一下单成功
     if return_code == "SUCCESS" and result_code == "SUCCESS":
         return response_dict
-
-    elif return_code == "SUCCESS":
+    elif result_code == "SUCCESS":
         raise WxPayError(err_code_des)
     else:
         raise WxPayError(return_msg)
